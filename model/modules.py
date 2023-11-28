@@ -5,7 +5,7 @@ from torch import nn
 from torch.nn import functional as F
 
 
-from model import ConvNorm, LinearNorm
+from model import ConvNorm, LinearNorm, BatchNormConv1d
 from utils import get_mask_from_lengths
 
 
@@ -22,9 +22,7 @@ class LocationLayer(nn.Module):
             stride=1,
             dilation=1,
         )
-        self.location_dense = LinearNorm(
-            attention_n_filters, attention_dim, bias=False, w_init_gain="tanh"
-        )
+        self.location_dense = LinearNorm(attention_n_filters, attention_dim, bias=False, w_init_gain="tanh")
 
     def forward(self, attention_weights_cat):
         processed_attention = self.location_conv(attention_weights_cat)
@@ -43,16 +41,10 @@ class Attention(nn.Module):
         attention_location_kernel_size,
     ):
         super(Attention, self).__init__()
-        self.query_layer = LinearNorm(
-            attention_rnn_dim, attention_dim, bias=False, w_init_gain="tanh"
-        )
-        self.memory_layer = LinearNorm(
-            embedding_dim, attention_dim, bias=False, w_init_gain="tanh"
-        )
+        self.query_layer = LinearNorm(attention_rnn_dim, attention_dim, bias=False, w_init_gain="tanh")
+        self.memory_layer = LinearNorm(embedding_dim, attention_dim, bias=False, w_init_gain="tanh")
         self.v = LinearNorm(attention_dim, 1, bias=False)
-        self.location_layer = LocationLayer(
-            attention_location_n_filters, attention_location_kernel_size, attention_dim
-        )
+        self.location_layer = LocationLayer(attention_location_n_filters, attention_location_kernel_size, attention_dim)
         self.score_mask_value = -float("inf")
 
     def get_alignment_energies(self, query, processed_memory, attention_weights_cat):
@@ -70,9 +62,7 @@ class Attention(nn.Module):
 
         processed_query = self.query_layer(query.unsqueeze(1))
         processed_attention_weights = self.location_layer(attention_weights_cat)
-        energies = self.v(
-            torch.tanh(processed_query + processed_attention_weights + processed_memory)
-        )
+        energies = self.v(torch.tanh(processed_query + processed_attention_weights + processed_memory))
 
         energies = energies.squeeze(-1)
         return energies
@@ -94,9 +84,7 @@ class Attention(nn.Module):
         attention_weights_cat: previous and cumulative attention weights
         mask: binary mask for padded data
         """
-        alignment = self.get_alignment_energies(
-            attention_hidden_state, processed_memory, attention_weights_cat
-        )
+        alignment = self.get_alignment_energies(attention_hidden_state, processed_memory, attention_weights_cat)
 
         if mask is not None:
             alignment.data.masked_fill_(mask, self.score_mask_value)
@@ -113,10 +101,7 @@ class Prenet(nn.Module):
         super(Prenet, self).__init__()
         in_sizes = [in_dim] + sizes[:-1]
         self.layers = nn.ModuleList(
-            [
-                LinearNorm(in_size, out_size, bias=False)
-                for (in_size, out_size) in zip(in_sizes, sizes)
-            ]
+            [LinearNorm(in_size, out_size, bias=False) for (in_size, out_size) in zip(in_sizes, sizes)]
         )
 
     def forward(self, x):
@@ -265,15 +250,117 @@ class Encoder(nn.Module):
         return outputs
 
 
+class Highway(nn.Module):
+    def __init__(self, in_size, out_size):
+        super(Highway, self).__init__()
+        self.H = nn.Linear(in_size, out_size)
+        self.H.bias.data.zero_()
+        self.T = nn.Linear(in_size, out_size)
+        self.T.bias.data.fill_(-1)
+        self.relu = nn.ReLU()
+        self.sigmoid = nn.Sigmoid()
+
+    def forward(self, inputs):
+        H = self.relu(self.H(inputs))
+        T = self.sigmoid(self.T(inputs))
+        return H * T + inputs * (1.0 - T)
+
+
+class CBHG(nn.Module):
+    """CBHG module: a recurrent neural network composed of:
+    - 1-d convolution banks
+    - Highway networks + residual connections
+    - Bidirectional gated recurrent units
+    """
+
+    def __init__(self, in_dim, K=16, projections=[128, 128]):
+        super(CBHG, self).__init__()
+        self.in_dim = in_dim
+        self.relu = nn.ReLU()
+        self.conv1d_banks = nn.ModuleList(
+            [
+                BatchNormConv1d(in_dim, in_dim, kernel_size=k, stride=1, padding=k // 2, activation=self.relu)
+                for k in range(1, K + 1)
+            ]
+        )
+        self.max_pool1d = nn.MaxPool1d(kernel_size=2, stride=1, padding=1)
+
+        in_sizes = [K * in_dim] + projections[:-1]
+        activations = [self.relu] * (len(projections) - 1) + [None]
+        self.conv1d_projections = nn.ModuleList(
+            [
+                BatchNormConv1d(in_size, out_size, kernel_size=3, stride=1, padding=1, activation=ac)
+                for (in_size, out_size, ac) in zip(in_sizes, projections, activations)
+            ]
+        )
+
+        self.pre_highway = nn.Linear(projections[-1], in_dim, bias=False)
+        self.highways = nn.ModuleList([Highway(in_dim, in_dim) for _ in range(4)])
+
+        self.gru = nn.GRU(in_dim, in_dim, 1, batch_first=True, bidirectional=True)
+
+    def forward(self, inputs, input_lengths=None):
+        # (B, T_in, in_dim)
+        x = inputs
+
+        # Needed to perform conv1d on time-axis
+        # (B, in_dim, T_in)
+        if x.size(-1) == self.in_dim:
+            x = x.transpose(1, 2)
+
+        T = x.size(-1)
+
+        # (B, in_dim*K, T_in)
+        # Concat conv1d bank outputs
+        x = torch.cat([conv1d(x)[:, :, :T] for conv1d in self.conv1d_banks], dim=1)
+        assert x.size(1) == self.in_dim * len(self.conv1d_banks)
+        x = self.max_pool1d(x)[:, :, :T]
+
+        for conv1d in self.conv1d_projections:
+            x = conv1d(x)
+
+        # (B, T_in, in_dim)
+        # Back to the original shape
+        x = x.transpose(1, 2)
+
+        if x.size(-1) != self.in_dim:
+            x = self.pre_highway(x)
+
+        # Residual connection
+        x += inputs
+        for highway in self.highways:
+            x = highway(x)
+
+        if input_lengths is not None:
+            x = nn.utils.rnn.pack_padded_sequence(x, input_lengths, batch_first=True)
+
+        # (B, T_in, in_dim*2)
+        outputs, _ = self.gru(x)
+
+        if input_lengths is not None:
+            outputs, _ = nn.utils.rnn.pad_packed_sequence(outputs, batch_first=True)
+
+        return outputs
+
+
+class TacotronEncoder(nn.Module):
+    def __init__(self, in_dim):
+        super(Encoder, self).__init__()
+        self.prenet = Prenet(in_dim, sizes=[256, 128])
+        self.cbhg = CBHG(128, K=16, projections=[128, 128])
+
+    def forward(self, inputs, input_lengths=None):
+        inputs = self.prenet(inputs)
+        return self.cbhg(inputs, input_lengths)
+
+
 class Decoder(nn.Module):
     def __init__(self, hparams):
         super(Decoder, self).__init__()
         self.n_mel_channels = hparams.n_mel_channels
         self.n_frames_per_step = hparams.n_frames_per_step
         self.encoder_embedding_dim = (
-            hparams.encoder_embedding_dim
-            + hparams.speaker_embedding_dim
-            + hparams.ref_enc_gru_size
+            hparams.encoder_embedding_dim + hparams.speaker_embedding_dim + hparams.ref_enc_gru_size
         )
         self.attention_rnn_dim = hparams.attention_rnn_dim
         self.decoder_rnn_dim = hparams.decoder_rnn_dim
@@ -288,9 +375,7 @@ class Decoder(nn.Module):
             [hparams.prenet_dim, hparams.prenet_dim],
         )
 
-        self.attention_rnn = nn.LSTMCell(
-            hparams.prenet_dim + self.encoder_embedding_dim, hparams.attention_rnn_dim
-        )
+        self.attention_rnn = nn.LSTMCell(hparams.prenet_dim + self.encoder_embedding_dim, hparams.attention_rnn_dim)
 
         self.attention_layer = Attention(
             hparams.attention_rnn_dim,
@@ -328,9 +413,7 @@ class Decoder(nn.Module):
         decoder_input: all zeros frames
         """
         B = memory.size(0)  # batch_size
-        decoder_input = Variable(
-            memory.data.new(B, self.n_mel_channels * self.n_frames_per_step).zero_()
-        )
+        decoder_input = Variable(memory.data.new(B, self.n_mel_channels * self.n_frames_per_step).zero_())
         return decoder_input
 
     def initialize_decoder_states(self, memory, mask):
@@ -345,21 +428,15 @@ class Decoder(nn.Module):
         B = memory.size(0)  # B = batch_size
         MAX_TIME = memory.size(1)
 
-        self.attention_hidden = Variable(
-            memory.data.new(B, self.attention_rnn_dim).zero_()
-        )
-        self.attention_cell = Variable(
-            memory.data.new(B, self.attention_rnn_dim).zero_()
-        )
+        self.attention_hidden = Variable(memory.data.new(B, self.attention_rnn_dim).zero_())
+        self.attention_cell = Variable(memory.data.new(B, self.attention_rnn_dim).zero_())
 
         self.decoder_hidden = Variable(memory.data.new(B, self.decoder_rnn_dim).zero_())
         self.decoder_cell = Variable(memory.data.new(B, self.decoder_rnn_dim).zero_())
 
         self.attention_weights = Variable(memory.data.new(B, MAX_TIME).zero_())
         self.attention_weights_cum = Variable(memory.data.new(B, MAX_TIME).zero_())
-        self.attention_context = Variable(
-            memory.data.new(B, self.encoder_embedding_dim).zero_()
-        )
+        self.attention_context = Variable(memory.data.new(B, self.encoder_embedding_dim).zero_())
 
         self.memory = memory
         self.processed_memory = self.attention_layer.memory_layer(memory)
@@ -431,9 +508,7 @@ class Decoder(nn.Module):
         self.attention_hidden, self.attention_cell = self.attention_rnn(
             cell_input, (self.attention_hidden, self.attention_cell)
         )
-        self.attention_hidden = F.dropout(
-            self.attention_hidden, self.p_attention_dropout, self.training
-        )
+        self.attention_hidden = F.dropout(self.attention_hidden, self.p_attention_dropout, self.training)
 
         attention_weights_cat = torch.cat(
             (
@@ -455,13 +530,9 @@ class Decoder(nn.Module):
         self.decoder_hidden, self.decoder_cell = self.decoder_rnn(
             decoder_input, (self.decoder_hidden, self.decoder_cell)
         )
-        self.decoder_hidden = F.dropout(
-            self.decoder_hidden, self.p_decoder_dropout, self.training
-        )
+        self.decoder_hidden = F.dropout(self.decoder_hidden, self.p_decoder_dropout, self.training)
 
-        decoder_hidden_attention_context = torch.cat(
-            (self.decoder_hidden, self.attention_context), dim=1
-        )
+        decoder_hidden_attention_context = torch.cat((self.decoder_hidden, self.attention_context), dim=1)
         decoder_output = self.linear_projection(decoder_hidden_attention_context)
 
         gate_prediction = self.gate_layer(decoder_hidden_attention_context)
@@ -487,9 +558,7 @@ class Decoder(nn.Module):
         decoder_inputs = torch.cat((decoder_input, decoder_inputs), dim=0)
         decoder_inputs = self.prenet(decoder_inputs)
 
-        self.initialize_decoder_states(
-            memory, mask=~get_mask_from_lengths(memory_lengths)
-        )
+        self.initialize_decoder_states(memory, mask=~get_mask_from_lengths(memory_lengths))
 
         mel_outputs, gate_outputs, alignments = [], [], []
         while len(mel_outputs) < decoder_inputs.size(0) - 1:
@@ -499,9 +568,7 @@ class Decoder(nn.Module):
             gate_outputs += [gate_output.squeeze(1)]
             alignments += [attention_weights]
 
-        mel_outputs, gate_outputs, alignments = self.parse_decoder_outputs(
-            mel_outputs, gate_outputs, alignments
-        )
+        mel_outputs, gate_outputs, alignments = self.parse_decoder_outputs(mel_outputs, gate_outputs, alignments)
 
         return mel_outputs, gate_outputs, alignments
 
@@ -538,9 +605,7 @@ class Decoder(nn.Module):
 
             decoder_input = mel_output
 
-        mel_outputs, gate_outputs, alignments = self.parse_decoder_outputs(
-            mel_outputs, gate_outputs, alignments
-        )
+        mel_outputs, gate_outputs, alignments = self.parse_decoder_outputs(mel_outputs, gate_outputs, alignments)
 
         return mel_outputs, gate_outputs, alignments
 
@@ -591,9 +656,7 @@ class ReferenceEncoder(nn.Module):
             for i in range(K)
         ]
         self.convs = nn.ModuleList(convs)
-        self.bns = nn.ModuleList(
-            [nn.BatchNorm2d(num_features=hp.ref_enc_filters[i]) for i in range(K)]
-        )
+        self.bns = nn.ModuleList([nn.BatchNorm2d(num_features=hp.ref_enc_filters[i]) for i in range(K)])
 
         out_channels = self.calculate_channels(hp.n_mel_channels, 3, 2, 1, K)
         self.gru = nn.GRU(
@@ -621,9 +684,7 @@ class ReferenceEncoder(nn.Module):
         if input_lengths is not None:
             input_lengths = torch.ceil(input_lengths.float() / 2 ** len(self.convs))
             input_lengths = input_lengths.cpu().numpy().astype(int)
-            out = nn.utils.rnn.pack_padded_sequence(
-                out, input_lengths, batch_first=True, enforce_sorted=False
-            )
+            out = nn.utils.rnn.pack_padded_sequence(out, input_lengths, batch_first=True, enforce_sorted=False)
 
         self.gru.flatten_parameters()
         _, out = self.gru(out)
@@ -643,9 +704,7 @@ class STL(nn.Module):
 
     def __init__(self, hp):
         super().__init__()
-        self.embed = nn.Parameter(
-            torch.FloatTensor(hp.token_num, hp.token_embedding_size // hp.num_heads)
-        )
+        self.embed = nn.Parameter(torch.FloatTensor(hp.token_num, hp.token_embedding_size // hp.num_heads))
         d_q = hp.ref_enc_gru_size
         d_k = hp.token_embedding_size // hp.num_heads
         self.attention = MultiHeadAttention(
@@ -683,13 +742,9 @@ class MultiHeadAttention(nn.Module):
         self.num_heads = num_heads
         self.key_dim = key_dim
 
-        self.W_query = nn.Linear(
-            in_features=query_dim, out_features=num_units, bias=False
-        )
+        self.W_query = nn.Linear(in_features=query_dim, out_features=num_units, bias=False)
         self.W_key = nn.Linear(in_features=key_dim, out_features=num_units, bias=False)
-        self.W_value = nn.Linear(
-            in_features=key_dim, out_features=num_units, bias=False
-        )
+        self.W_value = nn.Linear(in_features=key_dim, out_features=num_units, bias=False)
 
     def forward(self, query, key):
         querys = self.W_query(query)  # [N, T_q, num_units]
@@ -697,15 +752,9 @@ class MultiHeadAttention(nn.Module):
         values = self.W_value(key)
 
         split_size = self.num_units // self.num_heads
-        querys = torch.stack(
-            torch.split(querys, split_size, dim=2), dim=0
-        )  # [h, N, T_q, num_units/h]
-        keys = torch.stack(
-            torch.split(keys, split_size, dim=2), dim=0
-        )  # [h, N, T_k, num_units/h]
-        values = torch.stack(
-            torch.split(values, split_size, dim=2), dim=0
-        )  # [h, N, T_k, num_units/h]
+        querys = torch.stack(torch.split(querys, split_size, dim=2), dim=0)  # [h, N, T_q, num_units/h]
+        keys = torch.stack(torch.split(keys, split_size, dim=2), dim=0)  # [h, N, T_k, num_units/h]
+        values = torch.stack(torch.split(values, split_size, dim=2), dim=0)  # [h, N, T_k, num_units/h]
 
         # score = softmax(QK^T / (d_k ** 0.5))
         scores = torch.matmul(querys, keys.transpose(2, 3))  # [h, N, T_q, T_k]
@@ -714,9 +763,7 @@ class MultiHeadAttention(nn.Module):
 
         # out = score * V
         out = torch.matmul(scores, values)  # [h, N, T_q, num_units/h]
-        out = torch.cat(torch.split(out, 1, dim=0), dim=3).squeeze(
-            0
-        )  # [N, T_q, num_units]
+        out = torch.cat(torch.split(out, 1, dim=0), dim=3).squeeze(0)  # [N, T_q, num_units]
 
         return out
 
@@ -757,13 +804,8 @@ class Classifier(nn.Module):
         self.out_features = out_features
         N = 3
 
-        linears = [
-            nn.Linear(in_features=self.in_features, out_features=self.in_features)
-            for _ in range(N - 1)
-        ]
-        linears.append(
-            nn.Linear(in_features=self.in_features, out_features=self.out_features)
-        )
+        linears = [nn.Linear(in_features=self.in_features, out_features=self.in_features) for _ in range(N - 1)]
+        linears.append(nn.Linear(in_features=self.in_features, out_features=self.out_features))
         self.linears = nn.ModuleList(linears)
 
     def forward(self, x):

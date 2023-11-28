@@ -4,14 +4,7 @@ from math import sqrt
 from torch import nn
 
 from utils import to_gpu, get_mask_from_lengths
-from model import (
-    Encoder,
-    Decoder,
-    Postnet,
-    ReferenceEncoder,
-    Classifier,
-    GradientReverseLayer,
-)
+from model import Encoder, Decoder, Postnet, ReferenceEncoder, Classifier, GradientReverseLayer, TacotronEncoder
 
 
 class Tacotron2(nn.Module):
@@ -28,7 +21,7 @@ class Tacotron2(nn.Module):
         self.embedding.weight.data.uniform_(-val, val)
 
         # Tacotron2 Skeleton
-        self.encoder = Encoder(hparams)
+        self.encoder = TacotronEncoder(hparams.encoder_embedding_dim)
         self.decoder = Decoder(hparams)
         self.postnet = Postnet(hparams)
 
@@ -38,9 +31,7 @@ class Tacotron2(nn.Module):
         self.emo_encoder = ReferenceEncoder(hparams)
         self.emo_classifier = Classifier(hparams.ref_enc_gru_size, hparams.num_emotions)
 
-        self.spk_table = nn.Embedding(
-            hparams.num_speakers, hparams.speaker_embedding_dim
-        )
+        self.spk_table = nn.Embedding(hparams.num_speakers, hparams.speaker_embedding_dim)
 
         self.grl = GradientReverseLayer()
 
@@ -115,29 +106,19 @@ class Tacotron2(nn.Module):
         spk_emb = self.spk_encoder(mels, max_len)  # [N, 32]
         emo_emb = self.emo_encoder(mels, max_len)  # [N, HE]
 
-        emotion_input = emo_emb.unsqueeze(1).repeat(
-            1, text_emb.size(2), 1
-        )  # [N, T, HE]
+        emotion_input = emo_emb.unsqueeze(1).repeat(1, text_emb.size(2), 1)  # [N, T, HE]
         spk_id_emb = self.spk_table(speaker_id)
-        speaker_input = spk_id_emb.unsqueeze(1).repeat(
-            1, text_emb.size(2), 1
-        )  # [N, T, HS]
+        speaker_input = spk_id_emb.unsqueeze(1).repeat(1, text_emb.size(2), 1)  # [N, T, HS]
 
-        decoder_inputs = torch.cat(
-            (encoder_outputs, emotion_input, speaker_input), dim=2
-        )  # [N, T, HT + HE +HS]
+        decoder_inputs = torch.cat((encoder_outputs, emotion_input, speaker_input), dim=2)  # [N, T, HT + HE +HS]
 
         # Tacotron2 Decoder
-        mel_outputs, gate_outputs, alignments = self.decoder(
-            decoder_inputs, mels, memory_lengths=text_lengths
-        )
+        mel_outputs, gate_outputs, alignments = self.decoder(decoder_inputs, mels, memory_lengths=text_lengths)
 
         mel_outputs_postnet = self.postnet(mel_outputs)
         mel_outputs_postnet = mel_outputs + mel_outputs_postnet
 
-        parsed_out = self.parse_output(
-            [mel_outputs, mel_outputs_postnet, gate_outputs, alignments], output_lengths
-        )
+        parsed_out = self.parse_output([mel_outputs, mel_outputs_postnet, gate_outputs, alignments], output_lengths)
 
         emo_cls = self.emo_classifier(emo_emb)
         spk_cls = self.spk_classifier(spk_emb)
@@ -161,15 +142,9 @@ class Tacotron2(nn.Module):
 
         # get Decoder inputs already
         encoder_outputs = self.encoder.inference(embedded_text)
-        emotion_input = emotion_embedding.unsqueeze(1).repeat(
-            1, embedded_text.size(2), 1
-        )
-        speaker_input = embedded_speaker.unsqueeze(1).repeat(
-            1, embedded_text.size(2), 1
-        )
-        decoder_inputs = torch.cat(
-            (encoder_outputs, emotion_input, speaker_input), dim=2
-        )
+        emotion_input = emotion_embedding.unsqueeze(1).repeat(1, embedded_text.size(2), 1)
+        speaker_input = embedded_speaker.unsqueeze(1).repeat(1, embedded_text.size(2), 1)
+        decoder_inputs = torch.cat((encoder_outputs, emotion_input, speaker_input), dim=2)
         # Decoder
         mel_outputs, gate_outputs, alignments = self.decoder.inference(decoder_inputs)
 
@@ -177,9 +152,7 @@ class Tacotron2(nn.Module):
         mel_outputs_postnet = self.postnet(mel_outputs)
         mel_outputs_postnet = mel_outputs + mel_outputs_postnet
 
-        outputs = self.parse_output(
-            [mel_outputs, mel_outputs_postnet, gate_outputs, alignments]
-        )
+        outputs = self.parse_output([mel_outputs, mel_outputs_postnet, gate_outputs, alignments])
 
         return outputs
 
