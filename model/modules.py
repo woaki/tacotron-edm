@@ -8,6 +8,7 @@ from torch.autograd import Function
 
 from model import ConvNorm, LinearNorm, BatchNormConv1d
 from utils import get_mask_from_lengths
+import torch.nn.init as init
 
 
 class LocationLayer(nn.Module):
