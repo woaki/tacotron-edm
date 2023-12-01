@@ -3,6 +3,7 @@ from torch.autograd import Variable
 import torch.autograd as autograd
 from torch import nn
 from torch.nn import functional as F
+from torch.autograd import Function
 
 
 from model import ConvNorm, LinearNorm, BatchNormConv1d
@@ -354,6 +355,32 @@ class TacotronEncoder(nn.Module):
         return self.cbhg(inputs, input_lengths)
 
 
+class BahdanauAttention(nn.Module):
+    def __init__(self, dim):
+        super(BahdanauAttention, self).__init__()
+        self.query_layer = nn.Linear(dim, dim, bias=False)
+        self.tanh = nn.Tanh()
+        self.v = nn.Linear(dim, 1, bias=False)
+
+    def forward(self, query, processed_memory):
+        """
+        Args:
+            query: (batch, 1, dim) or (batch, dim)
+            processed_memory: (batch, max_time, dim)
+        """
+        if query.dim() == 2:
+            # insert time-axis for broadcasting
+            query = query.unsqueeze(1)
+        # (batch, 1, dim)
+        processed_query = self.query_layer(query)
+
+        # (batch, max_time, 1)
+        alignment = self.v(self.tanh(processed_query + processed_memory))
+
+        # (batch, max_time)
+        return alignment.squeeze(-1)
+
+
 class Decoder(nn.Module):
     def __init__(self, hparams):
         super(Decoder, self).__init__()
@@ -377,13 +404,7 @@ class Decoder(nn.Module):
 
         self.attention_rnn = nn.LSTMCell(hparams.prenet_dim + self.encoder_embedding_dim, hparams.attention_rnn_dim)
 
-        self.attention_layer = Attention(
-            hparams.attention_rnn_dim,
-            self.encoder_embedding_dim,
-            hparams.attention_dim,
-            hparams.attention_location_n_filters,
-            hparams.attention_location_kernel_size,
-        )
+        self.attention_layer = BahdanauAttention(256)
 
         self.decoder_rnn = nn.LSTMCell(
             hparams.attention_rnn_dim + self.encoder_embedding_dim,
@@ -781,16 +802,27 @@ class GST(nn.Module):
         return style_embed
 
 
-class GradientReverseLayer(torch.autograd.Function):
-    scale = 1.0
-
+class GradientReversalFn(Function):
     @staticmethod
-    def forward(ctx, x, scale=1.0):
+    def forward(ctx, x, alpha):
+        ctx.alpha = alpha
+
         return x.view_as(x)
 
     @staticmethod
     def backward(ctx, grad_output):
-        return GradientReverseLayer.scale * grad_output.neg()
+        output = grad_output.neg() * ctx.alpha
+
+        return output, None
+
+
+class GradientReversal(torch.nn.Module):
+    def __init__(self, alpha=1.0):
+        super(GradientReversal, self).__init__()
+        self.alpha = alpha
+
+    def forward(self, x):
+        return GradientReversalFn.apply(x, self.alpha)
 
 
 class Classifier(nn.Module):
