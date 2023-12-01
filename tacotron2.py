@@ -4,7 +4,7 @@ from math import sqrt
 from torch import nn
 
 from utils import to_gpu, get_mask_from_lengths
-from model import Encoder, Decoder, Postnet, ReferenceEncoder, Classifier, GradientReverseLayer, TacotronEncoder
+from model import Decoder, Postnet, ReferenceEncoder, Classifier, GradientReverseLayer, TacotronEncoder
 
 
 class Tacotron2(nn.Module):
@@ -110,15 +110,21 @@ class Tacotron2(nn.Module):
         spk_id_emb = self.spk_table(speaker_id)
         speaker_input = spk_id_emb.unsqueeze(1).repeat(1, text_emb.size(2), 1)  # [N, T, HS]
 
-        decoder_inputs = torch.cat((encoder_outputs, emotion_input, speaker_input), dim=2)  # [N, T, HT + HE +HS]
+        decoder_inputs = torch.cat(
+            (encoder_outputs, emotion_input, speaker_input), dim=2
+        )  # [N, T, HT + HE +HS]
 
         # Tacotron2 Decoder
-        mel_outputs, gate_outputs, alignments = self.decoder(decoder_inputs, mels, memory_lengths=text_lengths)
+        mel_outputs, gate_outputs, alignments = self.decoder(
+            decoder_inputs, mels, memory_lengths=text_lengths
+        )
 
         mel_outputs_postnet = self.postnet(mel_outputs)
         mel_outputs_postnet = mel_outputs + mel_outputs_postnet
 
-        parsed_out = self.parse_output([mel_outputs, mel_outputs_postnet, gate_outputs, alignments], output_lengths)
+        parsed_out = self.parse_output(
+            [mel_outputs, mel_outputs_postnet, gate_outputs, alignments], output_lengths
+        )
 
         emo_cls = self.emo_classifier(emo_emb)
         spk_cls = self.spk_classifier(spk_emb)

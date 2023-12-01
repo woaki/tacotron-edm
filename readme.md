@@ -134,7 +134,8 @@ The loss curves, synthesized mel-spectrograms, and audios are shown.
 
 # Implementation Issues
 
-- I have some questions about the way different characteristics are integrated in the original text, so here I have followed the approach in [Towards End-to-End Prosody Transfer for Expressive Speech Synthesis with Tacotron](https://arxiv.org/abs/1803.09047).
+- As outlined in the paper, I replaced the location-sensitive attention mechanism in Tacotron 2 with the attention mechanism from Tacotron.
+- I've got a few questions about integrating speaker embeddings. Here I have followed the approach in [Towards End-to-End Prosody Transfer for Expressive Speech Synthesis with Tacotron](https://arxiv.org/abs/1803.09047).
 
 Please inform me if you find any mistakes in this repo, or any useful tips to train a more emotional TTS model.
 
