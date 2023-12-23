@@ -475,8 +475,8 @@ class Decoder(nn.Module):
         self.decoder_cell = Variable(memory.data.new(B, self.decoder_rnn_dim).zero_())
 
         self.attention_weights = Variable(memory.data.new(B, MAX_TIME).zero_())
-        self.attention_weights_cum = Variable(memory.data.new(B, MAX_TIME).zero_())
-        self.attention_context = Variable(memory.data.new(B, self.encoder_embedding_dim).zero_())
+        # self.attention_weights_cum = Variable(memory.data.new(B, MAX_TIME).zero_())
+        self.attention_context = Variable(memory.data.new(B, self.encoder_embedding_dim).zero_())  # [B, 512]
 
         self.memory = memory
         print(memory.shape)
@@ -546,23 +546,18 @@ class Decoder(nn.Module):
         attention_weights:
         """
         cell_input = torch.cat((decoder_input, self.attention_context), -1)
+        # lstm
         self.attention_hidden, self.attention_cell = self.attention_rnn(
             cell_input, (self.attention_hidden, self.attention_cell)
         )
+        # dropout
         self.attention_hidden = F.dropout(self.attention_hidden, self.p_attention_dropout, self.training)
-
-        # attention_weights_cat = torch.cat(
-        #     (
-        #         self.attention_weights.unsqueeze(1),
-        #         self.attention_weights_cum.unsqueeze(1),
-        #     ),
-        #     dim=1,
-        # )
+        # attention
         self.attention_context, self.attention_weights = self.attention_layer(
             self.attention_hidden, self.processed_memory
         )
 
-        self.attention_weights_cum += self.attention_weights
+        # self.attention_weights_cum += self.attention_weights
         decoder_input = torch.cat((self.attention_hidden, self.attention_context), -1)
         self.decoder_hidden, self.decoder_cell = self.decoder_rnn(
             decoder_input, (self.decoder_hidden, self.decoder_cell)
@@ -590,7 +585,7 @@ class Decoder(nn.Module):
         alignments: sequence of attention weights from the decoder
         """
 
-        decoder_input = self.get_go_frame(memory).unsqueeze(0)
+        decoder_input = self.get_go_frame(memory).unsqueeze(0)  # [N, 80]
         decoder_inputs = self.parse_decoder_inputs(decoder_inputs)
         decoder_inputs = torch.cat((decoder_input, decoder_inputs), dim=0)
         decoder_inputs = self.prenet(decoder_inputs)
@@ -725,9 +720,7 @@ class ReferenceEncoder(nn.Module):
         if input_lengths is not None:
             input_lengths = torch.ceil(input_lengths.float() / 2 ** len(self.convs))
             input_lengths = input_lengths.cpu().numpy().astype(int)
-            out = nn.utils.rnn.pack_padded_sequence(
-                out, input_lengths, batch_first=True, enforce_sorted=False
-            )
+            out = nn.utils.rnn.pack_padded_sequence(out, input_lengths, batch_first=True, enforce_sorted=False)
 
         self.gru.flatten_parameters()
         _, out = self.gru(out)
