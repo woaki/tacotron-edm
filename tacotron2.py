@@ -98,21 +98,21 @@ class Tacotron2(nn.Module):
         text_inputs, text_lengths, mels, max_len, output_lengths, speaker_id = inputs
         text_lengths, output_lengths = text_lengths.data, output_lengths.data
         # tacontron2 encoder
-        text_emb = self.embedding(text_inputs).transpose(1, 2)  # [N, HT, T]
+        text_emb = self.embedding(text_inputs).transpose(1, 2)  # [B, 256, T]
         print("tt", text_emb.shape)
-        encoder_outputs = self.encoder(text_emb.transpose(1, 2), text_lengths.cpu())  # [N, T, HT]
+        encoder_outputs = self.encoder(text_emb.transpose(1, 2), text_lengths.cpu())  # [B, T, 256]
 
         # edm encoders
-        spk_emb = self.spk_encoder(mels, output_lengths)  # [N, 32]
-        emo_emb = self.emo_encoder(mels, output_lengths)  # [N, HE]
+        spk_emb = self.spk_encoder(mels, output_lengths)  # [B, 32]
+        emo_emb = self.emo_encoder(mels, output_lengths)  # [B, 128]
 
-        emotion_input = emo_emb.unsqueeze(1).repeat(1, text_emb.size(2), 1)  # [N, T, HE]
+        emotion_input = emo_emb.unsqueeze(1).repeat(1, text_emb.size(2), 1)  # [B, T, 128]
         spk_id_emb = self.spk_table(speaker_id)
-        speaker_input = spk_id_emb.unsqueeze(1).repeat(1, text_emb.size(2), 1)  # [N, T, HS]
+        speaker_input = spk_id_emb.unsqueeze(1).repeat(1, text_emb.size(2), 1)  # [B, T, 32]
 
         decoder_inputs = torch.cat(
             (encoder_outputs, emotion_input, speaker_input), dim=2
-        )  # [N, T, HT + HE +HS]
+        )  # [N, T, 416]
 
         # Tacotron2 Decoder
         mel_outputs, gate_outputs, alignments = self.decoder(

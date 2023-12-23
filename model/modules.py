@@ -106,15 +106,12 @@ class Prenet(nn.Module):
     def __init__(self, in_dim, sizes):
         super(Prenet, self).__init__()
         in_sizes = [in_dim] + sizes[:-1]
-        print("----")
-        print(in_sizes)
         self.layers = nn.ModuleList(
             [LinearNorm(in_size, out_size, bias=False) for (in_size, out_size) in zip(in_sizes, sizes)]
         )
 
     def forward(self, x):
         for linear in self.layers:
-            print("t_x", x.shape)
             x = F.dropout(F.relu(linear(x)), p=0.5, training=True)
         return x
 
@@ -316,7 +313,7 @@ class CBHG(nn.Module):
         self.gru = nn.GRU(in_dim, in_dim, 1, batch_first=True, bidirectional=True)
 
     def forward(self, inputs, input_lengths=None):
-        # (B, T_in, in_dim)
+        # (B, T_in, in_dim) [B, T, 128]
         x = inputs
 
         # Needed to perform conv1d on time-axis
@@ -366,8 +363,11 @@ class TacotronEncoder(nn.Module):
         self.cbhg = CBHG(128, K=16, projections=[128, 128])
 
     def forward(self, inputs, input_lengths=None):
+        """
+        inputs: [B, T, 256]
+        return: [B, T, 256]
+        """
         inputs = self.prenet(inputs)
-        print("oooo")
         return self.cbhg(inputs, input_lengths)
 
 
@@ -422,8 +422,8 @@ class Decoder(nn.Module):
             hparams.prenet_dim + self.encoder_embedding_dim, hparams.attention_rnn_dim
         )
 
-        self.attention_layer = BahdanauAttention(256)
-        self.memory_layer = nn.Linear(256, 256, bias=False)
+        self.attention_layer = BahdanauAttention(416)
+        self.memory_layer = nn.Linear(416, 416, bias=False)
 
         self.decoder_rnn = nn.LSTMCell(
             hparams.attention_rnn_dim + self.encoder_embedding_dim,
@@ -574,8 +574,8 @@ class Decoder(nn.Module):
         """Decoder forward pass for training
         PARAMS
         ------
-        memory: Encoder outputs
-        decoder_inputs: Decoder inputs for teacher forcing. i.e. mel-specs
+        memory: Encoder outputs [B, T, 416]
+        decoder_inputs: Decoder inputs for teacher forcing. i.e. mel-specs 
         memory_lengths: Encoder output lengths for attention masking.
 
         RETURNS
