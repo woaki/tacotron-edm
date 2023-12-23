@@ -46,7 +46,7 @@ def prepare_directories_and_logger(output_directory, log_directory):
     if not os.path.isdir(output_directory):
         os.makedirs(output_directory)
         os.chmod(output_directory, 0o775)
-    logger = Tacotron2Logger(os.path.join(output_directory, log_directory))
+    logger = Tacotron2Logger(log_directory)
     return logger
 
 
@@ -264,14 +264,14 @@ if __name__ == "__main__":
         "--output_directory",
         type=str,
         help="directory to save checkpoints",
-        default="Data/yourdata/ckpt",
+        default="Data/yourdata/ckpts",
     )
     parser.add_argument(
         "-l",
         "--log_directory",
         type=str,
         help="directory to save tensorboard logs",
-        default="logdir",
+        default="Data/yourdata/logs",
     )
     parser.add_argument(
         "-c",
