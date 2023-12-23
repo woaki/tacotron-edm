@@ -103,9 +103,8 @@ class Tacotron2(nn.Module):
         encoder_outputs = self.encoder(text_emb.transpose(1, 2), text_lengths.cpu())  # [N, T, HT]
 
         # edm encoders
-        print(mels)
-        spk_emb = self.spk_encoder(mels, max_len)  # [N, 32]
-        emo_emb = self.emo_encoder(mels, max_len)  # [N, HE]
+        spk_emb = self.spk_encoder(mels, output_lengths)  # [N, 32]
+        emo_emb = self.emo_encoder(mels, output_lengths)  # [N, HE]
 
         emotion_input = emo_emb.unsqueeze(1).repeat(1, text_emb.size(2), 1)  # [N, T, HE]
         spk_id_emb = self.spk_table(speaker_id)

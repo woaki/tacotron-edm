@@ -479,6 +479,7 @@ class Decoder(nn.Module):
         self.attention_context = Variable(memory.data.new(B, self.encoder_embedding_dim).zero_())
 
         self.memory = memory
+        print(memory.shape)
         self.processed_memory = self.memory_layer(memory)
         self.mask = mask
 
@@ -574,7 +575,7 @@ class Decoder(nn.Module):
         gate_prediction = self.gate_layer(decoder_hidden_attention_context)
         return decoder_output, gate_prediction, self.attention_weights
 
-    def forward(self, memory, decoder_inputs, spk_inputs, memory_lengths):
+    def forward(self, memory, decoder_inputs, memory_lengths):
         """Decoder forward pass for training
         PARAMS
         ------
