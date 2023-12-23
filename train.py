@@ -11,13 +11,14 @@ from tacotron2 import Tacotron2
 from utils import TextMelLoader, TextMelCollate
 from model import Tacotron2Loss, EdmLoss
 from logger import Tacotron2Logger
-from hparams_local import create_hparams
+from hparams import create_hparams
 
 os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
 
 def prepare_dataloaders(_hparams):
     # Get data, data loaders and collate function ready
+    print(_hparams.training_files)
     trainset = TextMelLoader(_hparams.training_files, _hparams)
     # valset = TextMelLoader(_hparams.validation_files, _hparams)
     # collate_fn -- 对 dataset_batch 里的数据进行预处理, 返回处理后的数据
@@ -263,7 +264,7 @@ if __name__ == "__main__":
         "--output_directory",
         type=str,
         help="directory to save checkpoints",
-        default="outdir",
+        default="Data/yourdata/ckpt",
     )
     parser.add_argument(
         "-l",

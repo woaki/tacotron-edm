@@ -4,7 +4,7 @@ from math import sqrt
 from torch import nn
 
 from utils import to_gpu, get_mask_from_lengths
-from model import Decoder, Postnet, ReferenceEncoder, Classifier, GradientReverseLayer, TacotronEncoder
+from model import Decoder, Postnet, ReferenceEncoder, Classifier, GradientReversal, TacotronEncoder
 
 
 class Tacotron2(nn.Module):
@@ -33,7 +33,7 @@ class Tacotron2(nn.Module):
 
         self.spk_table = nn.Embedding(hparams.num_speakers, hparams.speaker_embedding_dim)
 
-        self.grl = GradientReverseLayer()
+        self.grl = GradientReversal()
 
     @staticmethod
     def parse_batch(batch, hparams):

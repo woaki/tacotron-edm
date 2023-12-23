@@ -6,3 +6,4 @@
 Data/*
 !Data/demo/
 __pycache__
+*.log

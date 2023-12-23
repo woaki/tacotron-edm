@@ -358,7 +358,7 @@ class CBHG(nn.Module):
 
 class TacotronEncoder(nn.Module):
     def __init__(self, in_dim):
-        super(Encoder, self).__init__()
+        super(TacotronEncoder, self).__init__()
         self.prenet = Prenet(in_dim, sizes=[256, 128])
         self.cbhg = CBHG(128, K=16, projections=[128, 128])
 

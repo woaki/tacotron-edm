@@ -22,8 +22,8 @@ def create_hparams():
         #      Data Parameters         #
         ################################
         load_mel_from_disk=False,
-        training_files="Data/demo/filelists/train.list",
-        validation_files="Data/demo/filelists/val.list",
+        training_files="Data/yourdata/filelists/train.list",
+        validation_files="Data/yourdata/filelists/val.list",
         text_cleaners=["basic_cleaners"],
         num_emotions=5,
         num_speakers=10,
