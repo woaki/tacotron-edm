@@ -24,7 +24,7 @@ def create_hparams():
         load_mel_from_disk=False,
         training_files="Data/yourdata/filelists/train.list",
         validation_files="Data/yourdata/filelists/val.list",
-        text_cleaners=["basic_cleaners"],
+        text_cleaners=["mandarin_cleaners"],
         num_emotions=5,
         num_speakers=10,
         ################################

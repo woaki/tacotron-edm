@@ -91,8 +91,8 @@ class TextMelLoader(torch.utils.data.Dataset):
         Returns:
             emotion_id: Tensor
         """
-        # emotions = ["angry", "happy", "surprise", "normal", "sad", "fear"]
-        emotions = ["Angry", "Happy", "Surprise", "Neutral", "Sad"]
+        emotions = ["生气", "快乐", "惊喜", "中立", "伤心"]
+        # emotions = ["Angry", "Happy", "Surprise", "Neutral", "Sad"]
         emotion_id = torch.IntTensor([emotions.index(emotion)])
         # print("emotion_id\t", emotion_id)
         return emotion_id

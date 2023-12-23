@@ -99,7 +99,8 @@ class Tacotron2(nn.Module):
         text_lengths, output_lengths = text_lengths.data, output_lengths.data
         # tacontron2 encoder
         text_emb = self.embedding(text_inputs).transpose(1, 2)  # [N, HT, T]
-        encoder_outputs = self.encoder(text_emb, text_lengths)  # [N, T, HT]
+        print("tt", text_emb.shape)
+        encoder_outputs = self.encoder(text_emb.transpose(1, 2), text_lengths.cpu())  # [N, T, HT]
 
         # edm encoders
         print(mels)

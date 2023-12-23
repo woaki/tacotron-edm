@@ -106,12 +106,15 @@ class Prenet(nn.Module):
     def __init__(self, in_dim, sizes):
         super(Prenet, self).__init__()
         in_sizes = [in_dim] + sizes[:-1]
+        print("----")
+        print(in_sizes)
         self.layers = nn.ModuleList(
             [LinearNorm(in_size, out_size, bias=False) for (in_size, out_size) in zip(in_sizes, sizes)]
         )
 
     def forward(self, x):
         for linear in self.layers:
+            print("t_x", x.shape)
             x = F.dropout(F.relu(linear(x)), p=0.5, training=True)
         return x
 
@@ -364,6 +367,7 @@ class TacotronEncoder(nn.Module):
 
     def forward(self, inputs, input_lengths=None):
         inputs = self.prenet(inputs)
+        print("oooo")
         return self.cbhg(inputs, input_lengths)
 
 
