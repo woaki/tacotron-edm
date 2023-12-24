@@ -16,9 +16,7 @@ class Tacotron2Loss(nn.Module):
 
         mel_out, mel_out_postnet, gate_out, _ = model_output
         gate_out = gate_out.view(-1, 1)
-        mel_loss = nn.MSELoss()(mel_out, mel_target) + nn.MSELoss()(
-            mel_out_postnet, mel_target
-        )
+        mel_loss = nn.MSELoss()(mel_out, mel_target) + nn.MSELoss()(mel_out_postnet, mel_target)
         # mel_loss = nn.MSELoss()(mel_out, mel_target)
         gate_loss = nn.BCEWithLogitsLoss()(gate_out, gate_target)
 
@@ -39,8 +37,7 @@ class EdmLoss(nn.Module):
     def __init__(self):
         super(EdmLoss, self).__init__()
 
-    @staticmethod
-    def forward(edm_out, targets):
+    def forward(self, edm_out, targets):
         """
         return:
             L_sc -- speaker classification loss
@@ -52,9 +49,9 @@ class EdmLoss(nn.Module):
         emo_loss = nn.CrossEntropyLoss()(emo_cls, emo_lab)
         spk_loss = nn.CrossEntropyLoss()(spk_cls, spk_lab)
         r_emo_loss = nn.CrossEntropyLoss()(r_emo_cls, emo_lab)
-        ort_loss = ort_loss(emo_emb, spk_emb)
+        ort_loss = self.ort_loss(emo_emb, spk_emb)
 
-        edm_loss = emo_loss + spk_loss + r_emo_loss + ort_loss
+        edm_loss = emo_loss + 0.5 * spk_loss + r_emo_loss + 0.02 * ort_loss
 
         return edm_loss, emo_loss, spk_loss, r_emo_loss, ort_loss
 
