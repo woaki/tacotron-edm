@@ -20,7 +20,7 @@ def prepare_dataloaders(_hparams):
     # Get data, data loaders and collate function ready
     print(_hparams.training_files)
     trainset = TextMelLoader(_hparams.training_files, _hparams)
-    # valset = TextMelLoader(_hparams.validation_files, _hparams)
+    valset = TextMelLoader(_hparams.validation_files, _hparams)
     # collate_fn -- 对 dataset_batch 里的数据进行预处理, 返回处理后的数据
     collate_fn = TextMelCollate(_hparams)
 
@@ -39,7 +39,7 @@ def prepare_dataloaders(_hparams):
         drop_last=True,
         collate_fn=collate_fn,
     )
-    return train_loader, collate_fn
+    return train_loader, valset, collate_fn
 
 
 def prepare_directories_and_logger(output_directory, log_directory):
@@ -104,7 +104,7 @@ def validate(hparams, model, criterion, style_criterion, valset, iteration, coll
         val_loader = DataLoader(
             valset,
             sampler=None,
-            num_workers=16,
+            num_workers=1,
             shuffle=False,
             batch_size=hparams.batch_size,
             pin_memory=False,
@@ -114,10 +114,10 @@ def validate(hparams, model, criterion, style_criterion, valset, iteration, coll
         val_loss = 0.0
         for i, batch in enumerate(val_loader):
             x, y, style_targets = model.parse_batch(batch, hparams)
-            y_pred, style_out, alignments = model(x)
+            y_pred, edm_out, alignments = model(x)
             tacotron_loss, _, _ = criterion(y_pred, y)
-            style_loss = style_criterion(style_out, style_targets)
-            loss = tacotron_loss + style_loss
+            edm_loss, emo_loss, spk_loss, r_emo_loss, ort_loss = style_criterion(edm_out, style_targets)
+            loss = tacotron_loss + edm_loss
             val_loss += loss.item()
         val_loss = val_loss / (i + 1)
 
@@ -152,7 +152,7 @@ def train(output_directory, log_directory, checkpoint_path, warm_start, hparams)
 
     logger = prepare_directories_and_logger(output_directory, log_directory)
 
-    train_loader, collate_fn = prepare_dataloaders(hparams)
+    train_loader, valset, collate_fn = prepare_dataloaders(hparams)
 
     # Load checkpoint if one exists
     iteration = 0
@@ -230,7 +230,7 @@ def train(output_directory, log_directory, checkpoint_path, warm_start, hparams)
             if not is_overflow and (iteration % hparams.iters_per_checkpoint == 0):
                 print(time.strftime("%Y-%m-%d-%H_%M_%S", time.localtime()))  # recording time
                 # Validation Loss
-                # validate(hparams, tacotron2, criterion, style_criterion, valset, iteration, collate_fn, logger)
+                validate(hparams, tacotron2, criterion, edm_criterion, valset, iteration, collate_fn, logger)
                 # saving checkpoint
                 checkpoint_path = os.path.join(output_directory, "checkpoint_{}.pt".format(iteration))
                 save_checkpoint(tacotron2, optimizer, learning_rate, iteration, checkpoint_path)
